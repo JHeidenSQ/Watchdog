@@ -12,7 +12,7 @@ import serial
 BAUD = 1_000_000
 SID = 1
 TIMEOUT = 0.1                   # s per reply; raise if the USB device server adds latency
-LOCKED, UNLOCKED = 160, 1592    # 0..4095 over 360 deg, calibrate with `free` + `status`
+LOCKED, UNLOCKED = 2209, 373    # 0..4095 over 360 deg, calibrate with `free` + `status`
 SPEED, ACC = 1500, 50           # steps/s, 100 steps/s^2
 TORQUE_LIMIT = 600              # per mille of max torque; lower is gentler on the lock
 TOL = 30                        # steps short of target counted as jammed
