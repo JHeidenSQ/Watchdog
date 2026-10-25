@@ -62,6 +62,10 @@ def position(ser):
     return -(p & 0x7FFF) if p & 0x8000 else p
  
  
+class Jammed(IOError):
+    pass
+
+
 def move(ser, target):
     write(ser, TORQUE_LIM, word(TORQUE_LIMIT))
     write(ser, TORQUE_ENABLE, [1])
@@ -75,8 +79,13 @@ def move(ser, target):
     # cylinder friction holds the key. Hold torque instead if yours springs back
     write(ser, TORQUE_ENABLE, [0])
     if abs(final - target) > TOL:
-        sys.exit(f"jammed at {final}, target {target}")
+        raise Jammed(f"jammed at {final}, target {target}")
     print(f"at {final}")
+
+
+def turn(ser, delta):
+    # ponytail: clamps to one turn; multi-turn needs servo mode 3 and signed targets
+    move(ser, min(max(position(ser) + delta, 0), 4095))
  
  
 def main(argv):
@@ -102,15 +111,18 @@ def main(argv):
                   f"{read(ser, TEMP, 1)[0]} C")
         elif cmd == "free":
             write(ser, TORQUE_ENABLE, [0])
-        elif cmd == "lock":
-            move(ser, LOCKED)
-        elif cmd == "unlock":
-            move(ser, UNLOCKED)
-        elif cmd == "goto":
-            move(ser, int(rest[0]))
-        elif cmd == "turn":
-            # ponytail: clamps to one turn; multi-turn needs servo mode 3 and signed targets
-            move(ser, min(max(position(ser) + int(rest[0]), 0), 4095))
+        elif cmd in ("lock", "unlock", "goto", "turn"):
+            try:
+                if cmd == "lock":
+                    move(ser, LOCKED)
+                elif cmd == "unlock":
+                    move(ser, UNLOCKED)
+                elif cmd == "goto":
+                    move(ser, int(rest[0]))
+                else:
+                    turn(ser, int(rest[0]))
+            except Jammed as e:
+                sys.exit(str(e))
         else:
             sys.exit(__doc__)
  
