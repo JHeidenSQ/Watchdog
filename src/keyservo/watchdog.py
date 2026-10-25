@@ -2,11 +2,12 @@
 """Ping the laser; when it drops, power-cycle it with the key servo and restore
 emission and power mode.
 
-watchdog.py --host IP --servo PORT --laser COM3|HOST:PORT [--log FILE]
+watchdog.py --host IP --servo PORT --laser COM8|HOST:PORT [--log FILE]
 watchdog.py --simulate [--servo PORT|none]    Enter drops the fake laser
 watchdog.py --check
 """
 import argparse
+import contextlib
 import logging
 import subprocess
 import sys
@@ -59,7 +60,7 @@ class Watchdog:
     def __init__(self, reachable, open_laser, cycle, misses=3, boot_timeout=180, retry=5):
         self.reachable, self.open_laser, self.cycle = reachable, open_laser, cycle
         self.misses, self.boot_timeout, self.retry = misses, boot_timeout, retry
-        self.state = None  # (emission, mode) last read while healthy
+        self.state = None  # (emission, alignment_mode) last read while healthy
         self.missed = 0
 
     def step(self):
@@ -67,9 +68,9 @@ class Watchdog:
             self.missed = 0
             try:
                 with self.open_laser() as laser:
-                    state = laser.emission(), laser.mode()
+                    state = laser.emission, laser.alignment_mode
                 if state != self.state:
-                    log.info("laser emission=%s mode=%s", *state)
+                    log.info("laser emission=%s alignment=%s", *state)
                 self.state = state
             except Exception as e:
                 log.warning("laser reachable but query failed: %s", e)
@@ -98,15 +99,15 @@ class Watchdog:
         if self.state is None:
             log.warning("previous laser state unknown, leaving emission off")
             return True
-        emission, mode = self.state
+        emission, alignment = self.state
         # the control interface can come up after the network stack, so keep trying until the deadline
         while True:
             try:
                 with self.open_laser() as laser:
-                    laser.set_mode(mode)  # mode first so emission never starts at the wrong power
+                    laser.alignment_mode = alignment  # mode first so emission never starts at the wrong power
                     if emission:
-                        laser.set_emission(True)
-                log.info("restored emission=%s mode=%s", emission, mode)
+                        laser.emission = True
+                log.info("restored emission=%s alignment=%s", emission, alignment)
                 return True
             except Exception as e:
                 if time.monotonic() > deadline:
@@ -121,7 +122,7 @@ class Sim:
 
     def __init__(self, boot):
         self.boot, self.up_at = boot, 0.0
-        self.on, self.power = True, "full"
+        self.emission, self.alignment_mode = True, False
 
     def reachable(self):
         return time.monotonic() >= self.up_at
@@ -132,7 +133,7 @@ class Sim:
 
     def cycled(self):
         self.up_at = time.monotonic() + self.boot
-        self.on, self.power = False, "alignment"
+        self.emission, self.alignment_mode = False, True
 
     def __enter__(self):
         if not self.reachable():
@@ -142,36 +143,24 @@ class Sim:
     def __exit__(self, *exc):
         pass
 
-    def emission(self):
-        return self.on
-
-    def set_emission(self, on):
-        self.on = on
-
-    def mode(self):
-        return self.power
-
-    def set_mode(self, mode):
-        self.power = mode
-
 
 def check():
     sim = Sim(boot=0.05)
     w = Watchdog(sim.reachable, lambda: sim, sim.cycled, misses=2, boot_timeout=1, retry=0.01)
     w.step()
-    assert w.state == (True, "full")
+    assert w.state == (True, False)
     sim.drop()
     w.step()
     assert sim.up_at == float("inf")
     w.step()
-    assert (sim.on, sim.power) == (True, "full")
+    assert (sim.emission, sim.alignment_mode) == (True, False)
     print("ok")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", help="laser IP to ping")
-    p.add_argument("--laser", help="laser control link: COM3, /dev/cu.X or HOST:PORT")
+    p.add_argument("--laser", help="laser control link: COM8, /dev/cu.X or HOST:PORT")
     p.add_argument("--servo", default="none", help="servo port, or none to skip the key")
     p.add_argument("--step", type=int, default=1500, help="relative key turn for off; on is -step")
     p.add_argument("--off-time", type=float, default=5, help="s the laser stays off")
@@ -202,7 +191,8 @@ def main():
     else:
         if not (a.host and a.laser):
             p.error("--host and --laser are required unless --simulate")
-        reachable, open_laser = lambda: ping(a.host), lambda: Alcor(a.laser)
+        link = a.laser if a.laser.upper().startswith("COM") or a.laser.startswith("/dev/") else "socket://" + a.laser
+        reachable, open_laser = lambda: ping(a.host), lambda: contextlib.closing(Alcor(link))
 
     w = Watchdog(reachable, open_laser, cycle, a.misses, a.boot_timeout)
     while True:
