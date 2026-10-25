@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn a key with a Feetech STS servo through a URT-2.
  
-key.py PORT scan | status | free | lock | unlock | goto POS
+key.py PORT scan | status | free | lock | unlock | goto POS | turn DELTA
 key.py --check
 """
 import sys
@@ -108,6 +108,9 @@ def main(argv):
             move(ser, UNLOCKED)
         elif cmd == "goto":
             move(ser, int(rest[0]))
+        elif cmd == "turn":
+            # ponytail: clamps to one turn; multi-turn needs servo mode 3 and signed targets
+            move(ser, min(max(position(ser) + int(rest[0]), 0), 4095))
         else:
             sys.exit(__doc__)
  
